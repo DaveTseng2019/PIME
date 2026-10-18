@@ -34,11 +34,6 @@ using json = nlohmann::json;
 
 namespace PIME {
 
-static std::mutex g_iconCacheMutex;
-
-// static
-std::unordered_map<std::wstring, HICON> LangBarButton::iconCache_; // cache loaded icons
-
 LangBarButton::LangBarButton(TextService* service, const std::string& id, const GUID& guid, UINT commandId, const wchar_t* text, DWORD style):
 	Ime::LangBarButton(service, guid, commandId, text, style),
 	id_(id) {
@@ -74,22 +69,16 @@ LangBarButton* LangBarButton::fromJson(TextService* service, json& info) {
 	return nullptr;
 }
 
+TextService* LangBarButton::textService() const {
+	return static_cast<TextService*>(Ime::LangBarButton::textService());
+}
+
 void LangBarButton::setIconFile(std::wstring filePath) {
 	if (filePath != iconFile_) {
 		iconFile_ = std::move(filePath);
-
-		HICON icon = NULL;
-		{
-			std::lock_guard<std::mutex> lock(g_iconCacheMutex);
-			auto icon_it = iconCache_.find(iconFile_);
-			if (icon_it != iconCache_.end()) { // found in the cache
-				icon = icon_it->second;
-			}
-			else { // not in the cache
-				icon = (HICON)LoadImageW(NULL, iconFile_.c_str(), IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR | LR_LOADFROMFILE);
-				iconCache_[iconFile_] = icon; // cache the icon
-			}
-		}
+		auto* service = textService();
+		auto* module = service ? service->imeModule() : nullptr;
+		HICON icon = module ? module->iconCache().getIcon(iconFile_) : NULL;
 		if (icon) {
 			setIcon(icon);
 		}
@@ -145,20 +134,12 @@ void LangBarButton::updateFromJson(json& info) {
 	}
 }
 
-void LangBarButton::clearIconCache() {
-	std::lock_guard<std::mutex> lock(g_iconCacheMutex);
-	for (auto it = iconCache_.begin(); it != iconCache_.end(); ++it) {
-		DestroyIcon(it->second);
-	}
-	iconCache_.clear();
-}
-
 STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT* prcArea) {
 	// special handling for right click on windows 8 mode icon
 	if (id_ == WINDOWS_MODE_ICON_ID && click == TF_LBI_CLK_RIGHT) {
-		TextService* service = static_cast<TextService*>(textService());
+		TextService* service = textService();
 		// check if we need to show a popup menu
-		HMENU popupMenu = service->onMenu(this);
+		HMENU popupMenu = service ? service->onMenu(this) : NULL;
 		if (popupMenu != NULL) {
 			Ime::Window window; // TrackPopupMenu requires a window to work, so let's build a transient one.
 			window.create(HWND_DESKTOP, 0);
@@ -173,7 +154,7 @@ STDMETHODIMP LangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT* prcA
 }
 
 STDMETHODIMP LangBarButton::InitMenu(ITfMenu* pMenu) {
-	TextService* service = static_cast<TextService*>(textService());
+	TextService* service = textService();
 	if (service && service->onMenu(this, pMenu)) {
 		return S_OK;
 	}

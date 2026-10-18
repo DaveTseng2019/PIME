@@ -78,12 +78,16 @@ private:
 	static std::wstring getPipeName(const wchar_t* base_name);
 	HANDLE connectPipe(const wchar_t* pipeName, int timeoutMs);
 
+	static constexpr int kDefaultRpcTimeoutMs = 2000;
+	static constexpr int kServerStartupTimeoutMs = 15000;
+	static constexpr size_t kMaxIpcMessageLength = 4 * 1024 * 1024; // 4 MB
+
 	nlohmann::json createRpcRequest(const char* methodName);
-	bool callRpcMethod(nlohmann::json& request, nlohmann::json& response);
+	bool callRpcMethod(nlohmann::json& request, nlohmann::json& response, int timeoutMs = kDefaultRpcTimeoutMs);
 
 	bool isPipeCreatedByPIMEServer(HANDLE pipe);
 	bool waitForRpcConnection();
-	bool callRpcPipe(HANDLE pipe, const std::string& serializedRequest, std::string& serializedReply);
+	bool callRpcPipe(HANDLE pipe, const std::string& serializedRequest, std::string& serializedReply, int timeoutMs = kDefaultRpcTimeoutMs);
 	bool callPipeIO(bool isRead, void *buffer, DWORD size, DWORD *rlen, int timeoutMs);
 	void closeRpcConnection();
 
