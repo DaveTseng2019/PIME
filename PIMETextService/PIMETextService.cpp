@@ -47,7 +47,9 @@ TextService::TextService(ImeModule* module):
 	candPageCount_(0),
 	selKeys_(L"1234567890"),
 	candUseCursor_(false),
-	candFontSize_(12) {
+	candFontSize_(12),
+	popupMenu_(nullptr),
+	currentLangProfile_(GUID_NULL) {
 
 	// font for candidate and mesasge windows
 	font_ = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
