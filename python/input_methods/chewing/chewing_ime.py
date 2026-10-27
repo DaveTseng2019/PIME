@@ -1029,7 +1029,6 @@ class ChewingTextService(TextService):
                 icon_path = os.path.join(self.icon_dir, icon_name)
                 self.changeButton("switch-shape", icon=icon_path)
 
-    # 切換中英文模式
     # 由 Shift + 字母自動切成英文模式後，按 Enter 自動切回中文模式
     # Shift/Ctrl/Alt + Enter 不切換 (例如聊天軟體的換行)
     def switchBackFromAutoEnglish(self, keyEvent):
@@ -1042,6 +1041,7 @@ class ChewingTextService(TextService):
             self.chewingContext.set_ChiEngMode(CHINESE_MODE)
             self.updateLangButtons()
 
+    # 切換中英文模式
     def toggleLanguageMode(self):
         self.autoEnglishMode = False  # 手動切換後，不再自動切回中文
         chewingContext = self.chewingContext
