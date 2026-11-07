@@ -1,5 +1,8 @@
 #! python3
-# Copyright (C) 2026 PIME contributors
+# Copyright (C) 2026 Dave Tseng
+#
+# Architecture and design by Dave Tseng.
+# Implementation generated with AI assistance from Claude Code (Claude Opus 5.5).
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -16,7 +19,7 @@
 #
 # This file was generated with assistance from Claude Code (Claude Opus 5.5).
 
-import os
+import shutil
 import tempfile
 from ctypes import POINTER, c_ushort, c_void_p, create_string_buffer
 
@@ -49,18 +52,25 @@ class ToneMenu:
 
     def __init__(self, libchewing, context_class, data_dir):
         self._lib = libchewing
-        self._lib.chewing_get_phoneSeq.restype = POINTER(c_ushort)
-        self._lib.chewing_get_phoneSeq.argtypes = [c_void_p]
-        self._lib.chewing_free.argtypes = [c_void_p]
-        # 另一個看不見的新酷音引擎，只用來查每個聲調有哪些字；不碰使用者詞庫
-        user_path = os.path.join(tempfile.gettempdir(), "pime_chewing_tone_menu.sqlite3")
+        # libchewing[name] 每次都新建函式物件，不會像屬性存取那樣快取在共用的 CDLL 上，
+        # 所以在這裡設 restype/argtypes 不會改到其他程式碼看到的全域簽章
+        self._get_phone_seq = libchewing["chewing_get_phoneSeq"]
+        self._get_phone_seq.restype = POINTER(c_ushort)
+        self._get_phone_seq.argtypes = [c_void_p]
+        self._free = libchewing["chewing_free"]
+        self._free.argtypes = [c_void_p]
+        # 另一個看不見的新酷音引擎，只用來查每個聲調有哪些字；不碰使用者詞庫。
+        # 每個選單自己一個暫存資料夾，不同輸入法工作階段與行程不會共用同一個 SQLite 檔
+        self._temp_dir = tempfile.mkdtemp(prefix="pime_tone_menu_")
+        user_path = self._temp_dir + "/lookup.sqlite3"
         self._lookup = context_class(syspath=data_dir.encode("UTF-8"),
                                      userpath=user_path.encode("UTF-8"))
         self._lookup.set_ChiEngMode(1)
         self._lookup.set_KBType(KB_DEFAULT)
         # Esc 要清掉整個編輯區，否則上一次查的字會留著，下一次查到的是錯的字
         self._lookup.set_escCleanAllBuf(1)
-        self.index = None  # 要換聲調的字在編輯區的位置
+        self.index = None  # 要換聲調的字在編輯區的位置（含標點、空白等非注音項目）
+        self.phone_index = None  # 同一個字在注音序列裡的位置
         self.phones = []  # 選單上每一項的注音碼
 
     def bopomofo(self, phone):
@@ -70,11 +80,11 @@ class ToneMenu:
 
     def phone_seq(self, ctx):
         n = ctx.get_phoneSeqLen()
-        seq = self._lib.chewing_get_phoneSeq(ctx.ctx)
+        seq = self._get_phone_seq(ctx.ctx)
         try:
             return [seq[i] for i in range(n)]
         finally:
-            self._lib.chewing_free(seq)
+            self._free(seq)
 
     def candidates(self, phone):
         """The characters of one syllable, most common first."""
@@ -101,9 +111,14 @@ class ToneMenu:
         seq = self.phone_seq(ctx)
         if not seq:
             return []
-        # 和 ↓ 選字一樣：游標在最後面時，指的是最後一個字
-        self.index = min(ctx.cursor_Current(), len(seq) - 1)
-        current = seq[self.index]
+        # 和 ↓ 選字一樣：游標在最後面時，指的是最後一個項目
+        position = min(ctx.cursor_Current(), len(self._buffer(ctx)) - 1)
+        phone_index = self._phone_index(ctx, position, len(seq))
+        if phone_index is None:  # 游標在標點或空白上，或對不上：不開選單，免得改到別的字
+            return []
+        self.index = position
+        self.phone_index = phone_index
+        current = seq[phone_index]
         items = []
         # libchewing 的聲調碼：0 一聲、1 輕聲、2 ˊ、3 ˇ、4 ˋ (5 也顯示成一聲，不能用，否則一聲會出現兩次)
         for tone in range(0, 5):
@@ -122,26 +137,87 @@ class ToneMenu:
 
     def close(self):
         self.index = None
+        self.phone_index = None
         self.phones = []
+
+    def dispose(self):
+        """Release the lookup engine and delete its temporary database."""
+        self._lookup = None  # 先放掉引擎，Windows 才刪得掉它開著的檔案
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+
+    def __del__(self):
+        self.dispose()
 
     def is_open(self):
         return self.index is not None
 
     def choose(self, ctx, n, keyboard_layout):
         """Replace the character with menu item n. Returns True on success."""
-        index, phone = self.index, self.phones[n]
+        index, phone_index, phone = self.index, self.phone_index, self.phones[n]
         old = self.phone_seq(ctx)
+        chars = self._buffer(ctx)
         self.close()
         cursor = ctx.cursor_Current()
         self._move_cursor(ctx, index + 1)
         ctx.handle_Backspace()
         self._type(ctx, phone, keyboard_layout)
         if ctx.get_phoneSeqLen() != len(old):  # 新聲調打不出來：把原本的字打回去
-            self._type(ctx, old[index], keyboard_layout)
+            self._type(ctx, old[phone_index], keyboard_layout)
+            self._keep_characters(ctx, chars, index)
             self._move_cursor(ctx, cursor)
             return False
+        self._keep_characters(ctx, chars, index)
         self._move_cursor(ctx, cursor)
         return True
+
+    @staticmethod
+    def _buffer(ctx):
+        return list(ctx.buffer_String().decode("UTF-8"))
+
+    @staticmethod
+    def _is_syllable_char(char):
+        """True for a Chinese character; punctuation, spaces and English letters are not."""
+        code = ord(char)
+        return (0x3400 <= code <= 0x4DBF or 0x4E00 <= code <= 0x9FFF
+                or 0xF900 <= code <= 0xFAFF or 0x20000 <= code <= 0x2FA1F)
+
+    def _phone_index(self, ctx, position, phone_count):
+        """The place in the phone sequence of the buffer item at position, or None.
+
+        The cursor and the buffer count every item, but the phone sequence holds only
+        the Chinese characters, so a comma in the buffer shifts the two apart.
+        """
+        chars = self._buffer(ctx)
+        if position < 0 or not self._is_syllable_char(chars[position]):
+            return None
+        syllables = [self._is_syllable_char(char) for char in chars]
+        if sum(syllables) != phone_count:
+            return None
+        return sum(syllables[:position])
+
+    def _keep_characters(self, ctx, chars, skip):
+        """Choose the original character again wherever retyping changed a neighbour.
+
+        Deleting and retyping a syllable makes libchewing run its automatic phrase
+        selection again, which can turn the characters next to it into others
+        (today's weather: changing the tone of the second tian turned the following
+        character into a different one).
+        """
+        if len(self._buffer(ctx)) != len(chars):
+            return
+        for position, char in enumerate(chars):
+            if position == skip or self._buffer(ctx)[position] == char:
+                continue
+            self._move_cursor(ctx, position)
+            ctx.handle_Down()
+            ctx.cand_Enumerate()
+            candidates = []
+            while ctx.cand_hasNext():
+                candidates.append(ctx.cand_String().decode("UTF-8"))
+            if char in candidates:
+                ctx.cand_choose_by_index(candidates.index(char))
+            else:
+                ctx.handle_Esc()
 
     def _type(self, ctx, phone, keyboard_layout):
         ctx.set_KBType(KB_DEFAULT)
@@ -154,7 +230,7 @@ class ToneMenu:
     @staticmethod
     def _move_cursor(ctx, target):
         # 每次移一格；移不動就停，避免游標卡住時無限迴圈
-        for _ in range(ctx.get_phoneSeqLen() + 2):
+        for _ in range(len(ctx.buffer_String().decode("UTF-8")) + 2):
             now = ctx.cursor_Current()
             if now == target:
                 return
