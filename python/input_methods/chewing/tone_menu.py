@@ -71,6 +71,7 @@ class ToneMenu:
         self._lookup.set_escCleanAllBuf(1)
         self.index = None  # 要換聲調的字在編輯區的位置（含標點、空白等非注音項目）
         self.phone_index = None  # 同一個字在注音序列裡的位置
+        self.target = None  # 要換聲調的那個字，給畫面提示用（有些程式在組字時不畫游標）
         self.phones = []  # 選單上每一項的注音碼
 
     def bopomofo(self, phone):
@@ -118,6 +119,7 @@ class ToneMenu:
             return []
         self.index = position
         self.phone_index = phone_index
+        self.target = self._buffer(ctx)[position]
         current = seq[phone_index]
         items = []
         # libchewing 的聲調碼：0 一聲、1 輕聲、2 ˊ、3 ˇ、4 ˋ (5 也顯示成一聲，不能用，否則一聲會出現兩次)
@@ -138,6 +140,7 @@ class ToneMenu:
     def close(self):
         self.index = None
         self.phone_index = None
+        self.target = None
         self.phones = []
 
     def dispose(self):

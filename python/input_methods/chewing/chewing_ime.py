@@ -803,6 +803,8 @@ class ChewingTextService(TextService):
             self.showMessage("這個字沒有其他聲調", 2)
             return
         self.customizeUI(candPerRow=1)  # 聲調由上往下排，一聲在最上面
+        # 終端機等程式組字時不畫游標，用提示告訴使用者現在要換哪個字的聲調
+        self.showMessage("換「" + self.toneMenu.target + "」的聲調", 30)
         self.setCandidateList(labels)
         self.setCandidateCursor(0)
         self.setShowCandidates(True)
@@ -829,8 +831,11 @@ class ChewingTextService(TextService):
         if choice is not None:
             if not menu.choose(self.chewingContext, choice, chewingConfig.keyboardLayout):
                 self.showMessage("無法換成這個聲調", 2)
+            else:
+                self.hideMessage()
         else:
             menu.close()
+            self.hideMessage()
         self.setShowCandidates(False)
         self.setCandidateList([])
         self.customizeUI(candPerRow=chewingConfig.candPerRow)  # 恢復一般選字的排列
@@ -1099,6 +1104,7 @@ class ChewingTextService(TextService):
         TextService.onCompositionTerminated(self, forced)
         if self.toneMenu and self.toneMenu.is_open():  # 編輯區沒了，選單指的字也沒了
             self.toneMenu.close()
+            self.hideMessage()
             self.customizeUI(candPerRow=chewingConfig.candPerRow)
         if forced:
             # 中文組字到一半被系統強制關閉，清除編輯區內容

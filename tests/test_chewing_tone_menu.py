@@ -174,6 +174,7 @@ class ToneMenuWithLibchewingTests(unittest.TestCase):
         self._type_with_comma()
         self._move_to(3)  # on 今 (buffer position 3, phone position 2)
         labels = self.menu.open(self.ctx)
+        self.assertEqual(self.menu.target, "今")  # shown to the user: some terminals draw no cursor
         self.assertEqual([label.split()[0] for label in labels], ["ㄐㄧㄣˇ", "ㄐㄧㄣˋ"])
         self.assertTrue(self.menu.choose(self.ctx, labels.index("ㄐㄧㄣˇ 緊"), 0))
         self.assertEqual(self.buffer(), "你好，緊天天氣")
